@@ -4,7 +4,7 @@
     Commands: deploy (default), status, topup, restart, stop. Windows companion to
     run.sh (pwsh 7+). Auto-installs foundry + uv. Needs foundry (cast, forge) and uv.
 #>
-#Requires -Version 7.0
+#Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
 
 $HERE = $PSScriptRoot
@@ -57,7 +57,21 @@ function Spin {
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $resolved = Get-Command $Exe -ErrorAction SilentlyContinue
         $psi.FileName = if ($resolved) { $resolved.Source } else { $Exe }
-        foreach ($a in $CmdArgs) { [void]$psi.ArgumentList.Add($a) }
+        if ($PSVersionTable.PSVersion.Major -ge 6) {
+            foreach ($a in $CmdArgs) { [void]$psi.ArgumentList.Add($a) }
+        } else {
+            $escapedArgs = @()
+            foreach ($a in $CmdArgs) {
+                if ($a -match '[ \t"]' -or $a -eq '') {
+                    $escaped = $a -replace '(\\*)"', '$1$1\"'
+                    $escaped = $escaped -replace '(\\+)$', '$1$1'
+                    $escapedArgs += "`"$escaped`""
+                } else {
+                    $escapedArgs += $a
+                }
+            }
+            $psi.Arguments = $escapedArgs -join ' '
+        }
         $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
         $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
         $p = [System.Diagnostics.Process]::Start($psi)
@@ -216,6 +230,12 @@ function Resolve-Signer {
 # Ask the keystore password once per run (masked) and verify it decrypts the keystore.
 function Unlock {
     if ($script:KS_PASSWORD) { return }
+    if ($env:KS_PASSWORD) {
+        $pw = $env:KS_PASSWORD
+        & cast wallet address --account $env:KEYSTORE_ACCOUNT --password $pw 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) { $script:KS_PASSWORD = $pw; return }
+        Warn "provided env:KS_PASSWORD was incorrect"
+    }
     for ($i = 1; $i -le 3; $i++) {
         $pw = Read-Masked "  keystore password: "
         & cast wallet address --account $env:KEYSTORE_ACCOUNT --password $pw 2>&1 | Out-Null
